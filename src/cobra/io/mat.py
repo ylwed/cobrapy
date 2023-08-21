@@ -234,7 +234,6 @@ def _cell_to_str_list(
             for each_cell in m_cell
         ]
 
-
 def _cell_to_float_list(
     m_cell: np.ndarray,
     empty_value: Optional[float] = None,
@@ -283,6 +282,35 @@ def _cell_to_float_list(
     else:
         return [float(x[0]) if np.size(x[0]) else empty_value for x in m_cell]
 
+def _format_gpr(
+    gpr_string:str, 
+    gene_ids:List
+    ) -> str:
+    """
+    Reformat MATLAB model GPR rules syntax with syntax compatible with cobra.Model.
+    
+    Parameters
+    ----------
+    gpr_string: String with MATLAB gpr rule
+    gene_ids: List of genes extracted from MATLAB model
+    
+    Returns
+    -------
+    str
+        A string representing a gpr rule acceptable for cobra.reaction.Reaction.gene_reaction_rule
+    
+    Example:
+    >>> matlab_rule = '( x(2) | x(6) | ( x(5) & ( x(4) | x(1) ) & x(3) ))'
+    >>> gene_ids = ['110497328', '110506351', '110492729', '110497327', '110501984', '110487958']
+    >>> _format_gpr(matlab_rule, gene_ids)
+    >>> '110506351 or 110487958 or (110501984 and (110497327 or 110497328) and 110492729)'
+    """
+    substitutions = {'(x\([0-9]+\))':r'{\1}', '\ ':'', '\|':' or ', '&':' and ', r'^\(':'', r'\)$':''}
+    for pattern, replacement  in substitutions.items():
+        gpr_string = re.sub(pattern, replacement, gpr_string)
+    
+    gene_dictionary = {f'x({i+1})':g for i, g in enumerate(gene_ids)}
+    return gpr_string.format(**gene_dictionary)
 
 def load_matlab_model(
     infile_path: Union[str, Path, IO],
@@ -745,6 +773,7 @@ def from_mat_struct(
         "KEGGID",
         "metSmile",
         "metHMDB",
+        "grRules"
     ]
     new_cobratoolbox_fields = [
         "rxnConfidenceScores",
@@ -753,6 +782,7 @@ def from_mat_struct(
         "metKEGGID",
         "metSmiles",
         "metHMDBID",
+        "rules"
     ]
     for old_field, new_field in zip(old_cobratoolbox_fields, new_cobratoolbox_fields):
         if old_field in m.dtype.names and new_field not in m.dtype.names:
@@ -856,7 +886,8 @@ def from_mat_struct(
     rxn_ubs = _cell_to_float_list(m["ub"][0, 0], empty_value=None, inf_value=inf)
     rxn_gene_rules, rxn_names, rxn_subsystems = None, None, None
     try:
-        rxn_gene_rules = _cell_to_str_list(m["grRules"][0, 0], "")
+        rxn_gene_rules = _cell_to_str_list(m["rules"][0, 0], "")
+        rxn_gene_rules = [_format_gpr(rule, gene_ids) for rule in rxn_gene_rules]
     except (IndexError, ValueError):
         # TODO: use custom cobra exception to handle exception
         pass
